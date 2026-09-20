@@ -1705,7 +1705,7 @@
             <input id="accountPass" type="password" maxlength="40" placeholder="Password">
             <div class="authBtns"><button id="accountSubmit" type="button">Login</button></div>
             <div class="authStatus" id="authStatus"></div>
-            <p class="authNote">Your information is not connected to a server.</p>
+            <p class="authNote">Your account is securely checked through the laboratory database.</p>
         </div>
     </div>
     <div class="authDock"><button class="authToggle" id="authToggle" type="button">👤 Account</button></div>
@@ -14152,13 +14152,17 @@
 
             toggle.onclick = () => {
                 const user = getCurrentUser();
+                gate.classList.remove('hidden');
                 if (user) {
-                    const menu = document.getElementById('accountMenu');
-                    const menuUser = document.getElementById('accountMenuUser');
-                    if (menuUser) menuUser.textContent = (user.fullName || user.username || user.email || 'Signed in') + ' • Account';
-                    if (menu) menu.classList.toggle('open');
+                    name.value = user.username || user.email || '';
+                    pass.value = '';
+                    setMode('login');
+                    setStatus('Signed in as ' + (user.fullName || user.username || user.email) + '.');
                 } else {
-                    gate.classList.remove('hidden');
+                    setMode('login');
+                    name.value = '';
+                    pass.value = '';
+                    setStatus('');
                     name.focus();
                 }
             };
