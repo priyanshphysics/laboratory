@@ -14494,7 +14494,7 @@
         function certificateRecordForCurrentProject() {
             const u = getCurrentUser(), p = window.currentProject;
             if (!u || !p) return null;
-            return getCertificates().find(c => c.email.toLowerCase() === u.email.toLowerCase() && c.projectId === p.id) || null;
+            return getCertificates().find(c => String(c.email || '').toLowerCase() === String(u.email || '').toLowerCase() && c.projectId === p.id) || null;
         }
         function ensureCertificateRecord() {
             const u = getCurrentUser(), p = window.currentProject, d = p && getCompletion(p.id);
@@ -14502,7 +14502,7 @@
             const marks = Number(d.teacherMarks), b = d.performanceBreakdown || performanceBreakdown(d);
             if (!Number.isFinite(marks) || marks < 0 || marks > 100) return null;
             const list = getCertificates();
-            let rec = list.find(c => c.email.toLowerCase() === u.email.toLowerCase() && c.projectId === p.id);
+            let rec = list.find(c => String(c.email || '').toLowerCase() === String(u.email || '').toLowerCase() && c.projectId === p.id);
             if (!rec) {
                 rec = {
                     certificateId: newProjectCertificateId(), issuedAt: new Date().toISOString(),
@@ -14574,10 +14574,10 @@
             const cid = (document.getElementById('lookupCertificateId').value || '').trim().toUpperCase();
             const status = document.getElementById('certificateLookupStatus'), listEl = document.getElementById('certificateList');
             if (!email || !cid) { status.textContent = 'Please enter both registered email and Certificate ID.'; listEl.innerHTML = ''; return; }
-            const matches = getCertificates().filter(c => c.email.toLowerCase() === email && c.certificateId.toUpperCase() === cid);
+            const matches = getCertificates().filter(c => String(c.email || '').toLowerCase() === email && c.certificateId.toUpperCase() === cid);
             if (!matches.length) { status.style.color = '#b91c1c'; status.textContent = 'Certificate not found. Check the email and Certificate ID exactly as issued.'; listEl.innerHTML = ''; return; }
             status.style.color = '#07843b'; status.textContent = 'Certificate ID verified. Complete certificate history for this registered email is shown below.';
-            const all = getCertificates().filter(c => c.email.toLowerCase() === email).sort((a, b) => String(b.issuedAt).localeCompare(String(a.issuedAt)));
+            const all = getCertificates().filter(c => String(c.email || '').toLowerCase() === email).sort((a, b) => String(b.issuedAt).localeCompare(String(a.issuedAt)));
             listEl.innerHTML = all.map((c, i) => `<div class="certificateItem">
     <h3>🏆 ${escHtml(c.projectName)}</h3>
     <div class="certificateItemGrid">
