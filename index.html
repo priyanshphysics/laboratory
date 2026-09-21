@@ -14047,7 +14047,14 @@
                 set('certificateName', user.fullName);
                 set('certificateUsername', user.username);
                 set('certificateEmail', user.email);
-                set('certificateId', user.certificateId);
+
+                // IMPORTANT: Registration/login NEVER creates a certificate ID.
+                // A certificate ID exists only after a specific project is evaluated
+                // and its certificate record is issued.
+                const projectRecord = (typeof certificateRecordForCurrentProject === 'function')
+                    ? certificateRecordForCurrentProject()
+                    : null;
+                set('certificateId', projectRecord ? projectRecord.certificateId : '');
             }
 
             function setMode(m) {
@@ -14094,9 +14101,11 @@
                             studentId: result.studentId || result.StudentID || '',
                             fullName: fn,
                             username: usernameOrEmail,
-                            email: em,
-                            certificateId: result.certificateId || result.CertificateID || ''
+                            email: em
                         };
+
+                        // Registration creates only the student account.
+                        // It must NOT create or attach a certificate ID.
 
                         saveCurrentUser(user);
                         fillCertificateProfile(user);
@@ -14512,13 +14521,15 @@
                 saveCertificates(list);
             }
             document.getElementById('certificateId').value = rec.certificateId;
-            // Keep the newly issued certificate ID associated with the signed-in account.
+            // IMPORTANT: keep the certificate ID on the certificate record itself.
+            // Do NOT copy it into the registration/account profile because one
+            // student can earn many project certificates, each with its own ID.
             try {
-                const accounts = JSON.parse(localStorage.getItem('pppl_accounts') || '[]');
-                const idx = accounts.findIndex(a => String(a.email || '').toLowerCase() === String(u.email || '').toLowerCase());
-                if (idx >= 0) { accounts[idx].certificateId = rec.certificateId; localStorage.setItem('pppl_accounts', JSON.stringify(accounts)); }
                 const current = JSON.parse(localStorage.getItem('pppl_current_user') || 'null');
-                if (current) { current.certificateId = rec.certificateId; localStorage.setItem('pppl_current_user', JSON.stringify(current)); }
+                if (current && 'certificateId' in current) {
+                    delete current.certificateId;
+                    localStorage.setItem('pppl_current_user', JSON.stringify(current));
+                }
             } catch (e) { }
             return rec;
         }
@@ -14570,7 +14581,7 @@
             if (!email || !cid) { status.textContent = 'Please enter both registered email and Certificate ID.'; listEl.innerHTML = ''; return; }
             const matches = getCertificates().filter(c => c.email.toLowerCase() === email && c.certificateId.toUpperCase() === cid);
             if (!matches.length) { status.style.color = '#b91c1c'; status.textContent = 'Certificate not found. Check the email and Certificate ID exactly as issued.'; listEl.innerHTML = ''; return; }
-            status.style.color = '#07843b'; status.textContent = 'Certificate verified. All completed certificates linked to this registered account are shown below.';
+            status.style.color = '#07843b'; status.textContent = 'Certificate ID verified. Complete certificate history for this registered email is shown below.';
             const all = getCertificates().filter(c => c.email.toLowerCase() === email).sort((a, b) => String(b.issuedAt).localeCompare(String(a.issuedAt)));
             listEl.innerHTML = all.map((c, i) => `<div class="certificateItem">
     <h3>🏆 ${escHtml(c.projectName)}</h3>
