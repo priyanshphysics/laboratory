@@ -1666,14 +1666,17 @@
                         performance after the evaluation period.</div>
                 </div>
                 <div class="certificateForm">
-                    <label>Student name<input id="certificateName" type="text" placeholder="Enter student name"></label>
-                    <label>Username<input id="certificateUsername" type="text" placeholder="Enter username"></label>
-                    <label>Student Email<input id="certificateEmail" type="email" placeholder="Enter student email"></label>
+                    <label>Student name<input id="certificateName" type="text" placeholder="Auto-filled from account"
+                            readonly></label>
+                    <label>Username<input id="certificateUsername" type="text" placeholder="Auto-filled from account"
+                            readonly></label>
+                    <label>Student Email<input id="certificateEmail" type="email" placeholder="Auto-filled from account"
+                            readonly></label>
                     <label>Certificate ID / Roll No.<input id="certificateId" type="text"
                             placeholder="Automatically generated" readonly></label>
                 </div>
-                <div class="certificateNote">Enter your student name, username and email in the fields above. The
-                    Certificate ID is generated automatically by Priyansh Physics after the project is completed.
+                <div class="certificateNote">Student name, username and email come from the signed-in account. The
+                    Certificate ID is generated automatically by Priyansh Physics and cannot be edited by the student.
                 </div>
                 <div class="certificateActions">
                     <button class="certificateBtn runCertBtn" id="runProjectCertificate" type="button">▶ Run Project
@@ -13892,12 +13895,18 @@
             recordProjectActivity('calcInput', { values: vals });
         });
         function runProjectAndGenerateCertificate() {
-            // Student name, username and email are entered manually in the certificate form.
+            // Keep the existing certificate form exactly as before: account details
+            // are automatically shown in their fields when evaluation starts.
             // Certificate ID remains blank until this specific project is completed.
+            const account = (typeof getCurrentUser === 'function') ? getCurrentUser() : null;
+            if (account && typeof fillCertificateProfile === 'function') {
+                fillCertificateProfile(account);
+            }
+
             const name = document.getElementById('certificateName').value.trim();
             const email = document.getElementById('certificateEmail').value.trim();
             const username = document.getElementById('certificateUsername').value.trim();
-            if (!name || !email || !username) { alert('Please enter your name, username and email first.'); return; }
+            if (!name || !email || !username) { alert('Please sign in with a complete student account first.'); return; }
             if (!completionProjectId) { alert('Please open a project first, then start the evaluation.'); return; }
             startEvaluation();
             alert('Project evaluation started. Your Certificate ID will be generated automatically when the 2 minutes 30 seconds evaluation is complete.');
@@ -13924,6 +13933,22 @@
         }
         function closeCertificate() { document.getElementById('certificateOverlay').style.display = 'none'; }
         document.getElementById('runProjectCertificate').addEventListener('click', runProjectAndGenerateCertificate);
+
+        /* Minimal bridge wrapper: preserves the original local save function and mirrors key state to the old server. */
+        (function(){
+            if (window.__PPDBSaveCompletionWrapped) return;
+            window.__PPDBSaveCompletionWrapped = true;
+            const originalSaveCompletion = saveCompletion;
+            window.saveCompletion = function(id, data) {
+                originalSaveCompletion(id, data);
+                try {
+                    const u = window.PPDBSync && window.PPDBSync.loadRemoteStudentData ? (window.PPDB && window.PPDB.getCurrentUser ? window.PPDB.getCurrentUser() : null) : null;
+                    if (!u) return;
+                    if (data && data.evaluationStartedAt) window.PPDBSync.syncProgress(id, data.evaluationFinished ? 'completed' : 'started');
+                    if (data && data.evaluationFinished) window.PPDBSync.syncEvaluation(id, data.performanceBreakdown, data.teacherMarks);
+                } catch(e) { console.warn('Database sync bridge:', e); }
+            };
+        })();
 
         /* ===== Browser Voice Guide ===== */
         (function () {
@@ -14023,11 +14048,19 @@
 
             function extractUser(result) {
                 const u = result && (result.user || result.student || result.data || result.profile);
-                return (u && typeof u === 'object') ? u : null;
+                if (!u || typeof u !== 'object') return null;
+                return {
+                    studentId: u.studentId ?? u.StudentID ?? u.studentID ?? '',
+                    fullName: u.fullName ?? u.FullName ?? u.name ?? '',
+                    username: u.username ?? u.Username ?? u.userName ?? '',
+                    email: String(u.email ?? u.Email ?? '').trim().toLowerCase()
+                };
             }
 
             function saveCurrentUser(user) {
-                if (user) localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+                if (!user) return;
+                const normalized = extractUser({user}) || user;
+                localStorage.setItem(SESSION_KEY, JSON.stringify(normalized));
             }
 
             function getCurrentUser() {
@@ -14035,14 +14068,29 @@
                 catch (e) { return null; }
             }
 
+            window.PPDB = window.PPDB || {};
+            window.PPDB.api = API;
+            window.PPDB.request = databaseRequest;
+            window.PPDB.getCurrentUser = getCurrentUser;
+            window.PPDB.saveCurrentUser = saveCurrentUser;
+
             function fillCertificateProfile(user = getCurrentUser()) {
-                // Certificate form details are entered manually by the student.
-                // Do not auto-fill or overwrite the name, username or email fields.
+                if (!user) return;
+                const set = (id, value) => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = value || '';
+                };
+                set('certificateName', user.fullName);
+                set('certificateUsername', user.username);
+                set('certificateEmail', user.email);
+
+                // IMPORTANT: Registration/login NEVER creates a certificate ID.
+                // A certificate ID exists only after a specific project is evaluated
+                // and its certificate record is issued.
                 const projectRecord = (typeof certificateRecordForCurrentProject === 'function')
                     ? certificateRecordForCurrentProject()
                     : null;
-                const idEl = document.getElementById('certificateId');
-                if (idEl) idEl.value = projectRecord ? projectRecord.certificateId : '';
+                set('certificateId', projectRecord ? projectRecord.certificateId : '');
             }
 
             function setMode(m) {
@@ -14085,7 +14133,7 @@
                             password: pwd
                         });
 
-                        const user = extractUser(result) || {
+                        let user = extractUser(result) || {
                             studentId: result.studentId || result.StudentID || '',
                             fullName: fn,
                             username: usernameOrEmail,
@@ -14096,8 +14144,10 @@
                         // It must NOT create or attach a certificate ID.
 
                         saveCurrentUser(user);
+                        user = getCurrentUser();
                         fillCertificateProfile(user);
                         setStatus('Account created successfully and saved to the database.', true);
+                        if (window.PPDBSync) window.PPDBSync.loadRemoteStudentData(user);
                         setTimeout(() => gate.classList.add('hidden'), 500);
                     } catch (error) {
                         console.error('Registration error:', error);
@@ -14127,12 +14177,14 @@
                         password: pwd
                     });
 
-                    const user = extractUser(result);
+                    let user = extractUser(result);
                     if (!user) throw new Error('Login succeeded but no student profile was returned.');
 
                     saveCurrentUser(user);
+                    user = getCurrentUser();
                     fillCertificateProfile(user);
                     setStatus('Welcome back, ' + (user.fullName || user.username || 'Student') + '.', true);
+                    if (window.PPDBSync) window.PPDBSync.loadRemoteStudentData(user);
                     setTimeout(() => gate.classList.add('hidden'), 350);
                 } catch (error) {
                     console.error('Login error:', error);
@@ -14477,6 +14529,98 @@
         }
         function buildProjectCalculator(p) { /* The formula calculator above already belongs to this project. */ }
 
+        /* ===== Existing Server Bridge (minimal, keeps the old Google Sheets server) ===== */
+        (function () {
+            const FLAG_PREFIX = 'ppdb_sync_';
+            function userNow() {
+                try { return (window.PPDB && window.PPDB.getCurrentUser) ? window.PPDB.getCurrentUser() : JSON.parse(localStorage.getItem('pppl_current_user') || 'null'); }
+                catch (e) { return null; }
+            }
+            async function request(payload) {
+                if (!window.PPDB || typeof window.PPDB.request !== 'function') throw new Error('Database bridge is unavailable.');
+                return window.PPDB.request(payload);
+            }
+            function projectTitle(id) {
+                const p = Array.isArray(projects) ? projects.find(x => x.id === id) : null;
+                return p ? p.title : id;
+            }
+            function mergeRemoteCertificates(rows) {
+                if (!Array.isArray(rows) || !rows.length) return;
+                let local = [];
+                try { local = JSON.parse(localStorage.getItem('pppl_certificates') || '[]'); } catch (e) { local = []; }
+                const byKey = new Map(local.map(c => [String((c.email || '')).toLowerCase() + '|' + String(c.projectId || ''), c]));
+                rows.forEach(r => {
+                    const email = String(r.Email || r.email || '').trim().toLowerCase();
+                    const projectId = String(r.ProjectID || r.projectId || '').trim();
+                    const key = email + '|' + projectId;
+                    const p = Array.isArray(projects) ? projects.find(x => x.id === projectId) : null;
+                    const mapped = {
+                        certificateId: r.CertificateID || r.certificateId || '',
+                        issuedAt: r.IssueDate || r.issuedAt || new Date().toISOString(),
+                        projectId,
+                        projectName: p ? p.title : projectId,
+                        category: r.Category || r.category || (p ? p.category : ''),
+                        name: (userNow() || {}).fullName || r.FullName || '',
+                        username: (userNow() || {}).username || r.Username || '',
+                        email,
+                        marks: Number(r.FinalMarks ?? r.finalMarks ?? 0),
+                        breakdown: { theory: 0, practical: 0, sim: 0, calc: 0, activity: 0 }
+                    };
+                    if (mapped.certificateId) byKey.set(key, {...(byKey.get(key) || {}), ...mapped});
+                });
+                localStorage.setItem('pppl_certificates', JSON.stringify(Array.from(byKey.values())));
+            }
+            async function loadRemoteStudentData(user) {
+                if (!user || !user.studentId) return;
+                try {
+                    const r = await request({action:'getStudentCertificates', studentID:user.studentId, email:user.email});
+                    if (r && r.success) mergeRemoteCertificates(r.certificates || []);
+                } catch (e) { console.warn('Certificate sync skipped:', e.message || e); }
+                try {
+                    const r = await request({action:'getStudentProgress', studentID:user.studentId});
+                    if (r && r.success) localStorage.setItem('pppl_remote_progress_cache', JSON.stringify(r.progress || []));
+                } catch (e) { console.warn('Progress sync skipped:', e.message || e); }
+            }
+            async function syncProgress(projectId, status) {
+                const u = userNow();
+                if (!u || !u.studentId || !projectId) return;
+                try { await request({action:'saveProgress', studentID:u.studentId, projectID:projectId, status}); }
+                catch (e) { console.warn('Progress save skipped:', e.message || e); }
+            }
+            async function syncEvaluation(projectId, breakdown, marks) {
+                const u = userNow();
+                if (!u || !u.studentId || !projectId) return;
+                const key = FLAG_PREFIX + 'evaluation|' + u.studentId + '|' + projectId;
+                if (localStorage.getItem(key)) return;
+                try {
+                    const b = breakdown || {};
+                    await request({action:'saveEvaluation', studentID:u.studentId, projectID:projectId,
+                        theory:Number(b.theory||0), practical:Number(b.practical||0), simulation:Number(b.sim||0),
+                        calculation:Number(b.calc||0), activity:Number(b.activity||0)});
+                    localStorage.setItem(key,'1');
+                } catch (e) { console.warn('Evaluation save skipped:', e.message || e); }
+            }
+            async function syncCertificate(rec) {
+                const u = userNow();
+                if (!u || !u.studentId || !rec || !rec.projectId || !rec.certificateId) return;
+                const key = FLAG_PREFIX + 'certificate|' + u.studentId + '|' + rec.projectId;
+                if (localStorage.getItem(key)) return;
+                try {
+                    const r = await request({action:'createCertificate', studentID:u.studentId, email:u.email,
+                        category:rec.category || '', projectID:rec.projectId, finalMarks:Number(rec.marks||0)});
+                    if (r && r.success) {
+                        if (r.certificateID) rec.certificateId = r.certificateID;
+                        localStorage.setItem(key,'1');
+                        let all=[]; try{all=JSON.parse(localStorage.getItem('pppl_certificates')||'[]')}catch(e){all=[]}
+                        all=all.map(c=>c.projectId===rec.projectId&&String(c.email||'').toLowerCase()===String(u.email||'').toLowerCase()?{...c,certificateId:rec.certificateId}:c);
+                        localStorage.setItem('pppl_certificates',JSON.stringify(all));
+                        const idEl=document.getElementById('certificateId'); if(idEl) idEl.value=rec.certificateId;
+                    }
+                } catch (e) { console.warn('Certificate save skipped:', e.message || e); }
+            }
+            window.PPDBSync = {loadRemoteStudentData, syncProgress, syncEvaluation, syncCertificate};
+        })();
+
         /* ===== Certificate generation and persistent certificate library ===== */
         function getCurrentUser() {
             try { return JSON.parse(localStorage.getItem('pppl_current_user') || 'null') } catch (e) { return null }
@@ -14516,6 +14660,7 @@
                 saveCertificates(list);
             }
             document.getElementById('certificateId').value = rec.certificateId;
+            if (window.PPDBSync) window.PPDBSync.syncCertificate(rec);
             // IMPORTANT: keep the certificate ID on the certificate record itself.
             // Do NOT copy it into the registration/account profile because one
             // student can earn many project certificates, each with its own ID.
