@@ -1699,12 +1699,10 @@
             <input id="accountFullName" type="text" maxlength="60" placeholder="Full student name" style="display:none">
             <input id="accountEmail" type="email" maxlength="100" placeholder="Student email address"
                 style="display:none">
-            <input id="accountOtp" type="text" inputmode="numeric" autocomplete="one-time-code"
-                maxlength="6" placeholder="6-digit email verification code" style="display:none">
             <input id="accountPass" type="password" maxlength="40" placeholder="Password">
             <div class="authBtns"><button id="accountSubmit" type="button">Login</button></div>
             <div class="authStatus" id="authStatus"></div>
-            <p class="authNote">Registration requires a real email you can access. A verification code will be sent to that email. Your website password is created by you and is not your Gmail/email password.</p>
+            <p class="authNote">Your account is securely checked through the laboratory database.</p>
         </div>
     </div>
     <div class="authDock"><button class="authToggle" id="authToggle" type="button">👤 Account</button></div>
@@ -13992,14 +13990,13 @@
             const name = document.getElementById('accountName');
             const fullName = document.getElementById('accountFullName');
             const email = document.getElementById('accountEmail');
-            const otp = document.getElementById('accountOtp');
             const pass = document.getElementById('accountPass');
             const status = document.getElementById('authStatus');
             let mode = 'login';
-            let registrationCodeSent = false;
 
             /* Uses the DATABASE_API already defined above. */
             const API = (typeof DATABASE_API !== 'undefined') ? DATABASE_API : '';
+            const SESSION_KEY = 'pppl_current_user';
 
             function setStatus(message, ok = false) {
                 if (!status) return;
@@ -14050,14 +14047,11 @@
 
             function setMode(m) {
                 mode = m;
-                registrationCodeSent = false;
                 loginTab.classList.toggle('active', m === 'login');
                 registerTab.classList.toggle('active', m === 'register');
-                submit.textContent = m === 'login' ? 'Login' : 'Send Verification Code';
+                submit.textContent = m === 'login' ? 'Login' : 'Create Account';
                 fullName.style.display = m === 'register' ? 'block' : 'none';
                 email.style.display = m === 'register' ? 'block' : 'none';
-                otp.style.display = 'none';
-                otp.value = '';
                 setStatus('');
             }
 
@@ -14070,80 +14064,47 @@
                     const em = email.value.trim().toLowerCase();
 
                     if (!usernameOrEmail || !fn || !em || !pwd) {
-                        setStatus('Please enter name, username, email and a website password.');
+                        setStatus('Please enter name, username, email and password.');
                         return;
                     }
                     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
                         setStatus('Please enter a valid email address.');
                         return;
                     }
-                    if (pwd.length < 6) {
-                        setStatus('Website password must be at least 6 characters.');
-                        return;
-                    }
 
                     submit.disabled = true;
+                    submit.textContent = 'Creating Account…';
+                    setStatus('Connecting to database…');
 
                     try {
-                        if (!registrationCodeSent) {
-                            submit.textContent = 'Sending Code…';
-                            setStatus('Sending a verification code to your email…');
+                        const result = await databaseRequest({
+                            action: 'register',
+                            fullName: fn,
+                            username: usernameOrEmail,
+                            email: em,
+                            password: pwd
+                        });
 
-                            const result = await databaseRequest({
-                                action: 'sendRegistrationCode',
-                                fullName: fn,
-                                username: usernameOrEmail,
-                                email: em,
-                                password: pwd
-                            });
+                        const user = extractUser(result) || {
+                            studentId: result.studentId || result.StudentID || '',
+                            fullName: fn,
+                            username: usernameOrEmail,
+                            email: em
+                        };
 
-                            registrationCodeSent = true;
-                            otp.style.display = 'block';
-                            submit.textContent = 'Verify & Create Account';
-                            setStatus('Verification code sent. Check your email and enter the 6-digit code.');
-                        } else {
-                            const code = otp.value.trim();
-                            if (!/^\d{6}$/.test(code)) {
-                                setStatus('Enter the 6-digit verification code sent to your email.');
-                                return;
-                            }
+                        // Registration creates only the student account.
+                        // It must NOT create or attach a certificate ID.
 
-                            submit.textContent = 'Verifying…';
-                            setStatus('Checking your email verification code…');
-
-                            const result = await databaseRequest({
-                                action: 'verifyRegistration',
-                                fullName: fn,
-                                username: usernameOrEmail,
-                                email: em,
-                                password: pwd,
-                                otp: code
-                            });
-
-                            const user = extractUser(result) || {
-                                studentId: result.studentId || result.StudentID || '',
-                                fullName: fn,
-                                username: usernameOrEmail,
-                                email: em
-                            };
-
-                            // Registration creates only the verified student account.
-                            // It does NOT create or attach a certificate ID.
-                            saveCurrentUser(user);
-                            fillCertificateProfile(user);
-                            setStatus('Email verified. Account created successfully.', true);
-                            setTimeout(() => gate.classList.add('hidden'), 500);
-                        }
+                        saveCurrentUser(user);
+                        fillCertificateProfile(user);
+                        setStatus('Account created successfully and saved to the database.', true);
+                        setTimeout(() => gate.classList.add('hidden'), 500);
                     } catch (error) {
                         console.error('Registration error:', error);
                         setStatus(error.message || 'Registration failed.');
                     } finally {
                         submit.disabled = false;
-                        if (mode === 'register') {
-                            submit.textContent = registrationCodeSent
-                                ? 'Verify & Create Account'
-                                : 'Send Verification Code';
-                        }
+                        submit.textContent = mode === 'login' ? 'Login' : 'Create Account';
                     }
                     return;
                 }
@@ -14178,7 +14139,7 @@
                     setStatus(error.message || 'Incorrect username/email or password.');
                 } finally {
                     submit.disabled = false;
-                    submit.textContent = mode === 'login' ? 'Login' : 'Send Verification Code';
+                    submit.textContent = mode === 'login' ? 'Login' : 'Create Account';
                 }
             }
 
@@ -14205,11 +14166,10 @@
 
             name.addEventListener('keydown', e => { if (e.key === 'Enter') handleAccountSubmit(); });
             pass.addEventListener('keydown', e => { if (e.key === 'Enter') handleAccountSubmit(); });
-            otp.addEventListener('keydown', e => { if (e.key === 'Enter') handleAccountSubmit(); });
 
             /* IMPORTANT: Always show Login/Register when the website is opened.
                A saved local session must not automatically bypass the account gate.
-               The user must explicitly log in or register before entering the main website. */
+               The user must explicitly log in again before entering the main website. */
             const current = getCurrentUser();
             gate.classList.remove('hidden');
             setMode('login');
