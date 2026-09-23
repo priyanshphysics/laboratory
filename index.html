@@ -13950,60 +13950,445 @@
             };
         })();
 
-        /* ===== Browser Voice Guide ===== */
+        /* ===== UPGRADED COMPLETE WEBSITE VOICE READER =====
+           Reads all visible website content, line-by-line, while intentionally
+           excluding navigation/filter controls and the Voice Guide control panel.
+           It also reads the currently open project in full, including tables,
+           formulas, theory, simulation readouts, certificate/evaluation text,
+           and dynamically changing visible content.
+        */
         (function () {
             const synth = window.speechSynthesis;
-            const panel = document.getElementById('voicePanel'), toggle = document.getElementById('voiceToggle');
-            const voiceSelect = document.getElementById('voiceSelect'), speed = document.getElementById('voiceSpeed');
-            const status = document.getElementById('voiceStatus'), bar = document.getElementById('voiceProgressBar');
-            let voices = [], sections = [], index = 0, speaking = false;
-            function setStatus(x) { status.textContent = x }
-            function loadVoices() {
-                voices = synth.getVoices().filter(v => v.lang);
-                voiceSelect.innerHTML = '';
-                voices.forEach((v, i) => { let o = document.createElement('option'); o.value = i; o.textContent = v.name + ' — ' + v.lang; voiceSelect.appendChild(o) });
-                const preferred = voices.findIndex(v => /^en(-IN)?/i.test(v.lang));
-                if (preferred >= 0) voiceSelect.value = preferred;
-            }
-            if (synth) { loadVoices(); if ('onvoiceschanged' in synth) synth.onvoiceschanged = loadVoices; }
-            toggle.addEventListener('click', () => { panel.classList.toggle('open'); toggle.textContent = panel.classList.contains('open') ? '🔊 Voice Guide ▴' : '🔊 Voice Guide ▾' });
-            function clean(el) { return (el?.innerText || '').replace(/\s+/g, ' ').trim() }
-            function makeWhole() {
-                const parts = [];
-                const header = clean(document.querySelector('header')); if (header) parts.push('Welcome to Priyansh Physics Project Laboratory. ' + header);
-                const intro = clean(document.querySelector('main') || document.body);
-                const cards = [...document.querySelectorAll('.project-card,.card')].map(clean).filter(Boolean);
-                if (cards.length) { parts.push('The website contains interactive physics projects. Here are the available projects.'); cards.forEach((x, i) => parts.push('Project ' + (i + 1) + '. ' + x)); }
-                else if (intro) parts.push(intro);
-                parts.push('You can open any project to see its objective, principle, theory, formula, materials, construction, procedure, precautions, and live simulation. Use the category filters and search box to explore the laboratory.');
-                return parts;
-            }
-            function makeProject() {
-                const modal = document.querySelector('#projectModal,.modal.show,.modal[style*="display: block"]');
-                const el = modal || document.body;
-                const title = clean(document.getElementById('pTitle'));
-                if (!title) return ['Open a project first, then press Project to hear its explanation.'];
-                return [title, 'Level: ' + clean(document.getElementById('pLevel')), 'Objective: ' + clean(document.getElementById('pObjective')), 'Principle: ' + clean(document.getElementById('pPrinciple')), 'Theory: ' + clean(document.getElementById('pTheory')), 'Formula: ' + clean(document.getElementById('pFormula')), 'Materials: ' + clean(document.getElementById('pMaterials')), 'Construction: ' + clean(document.getElementById('pConstruction')), 'Procedure: ' + clean(document.getElementById('pProcedure')), 'Precautions: ' + clean(document.getElementById('pPrecautions')), 'Complete theory: ' + clean(document.getElementById('pTheoryLong')), 'The second live mechanism model shows the physical cause-and-effect process.', 'The live simulation lets you change parameters and observe their effects.'];
-            }
-            function speakParts(parts) {
-                if (!synth) { setStatus('Speech synthesis is not supported in this browser.'); return; }
-                synth.cancel(); sections = parts.filter(x => x && x.length > 2); index = 0; speaking = true; speakNext();
-            }
-            function speakNext() {
-                if (!speaking || index >= sections.length) { speaking = false; bar.style.width = '100%'; setStatus('Finished.'); return; }
-                const text = sections[index++]; const u = new SpeechSynthesisUtterance(text);
-                const v = voices[Number(voiceSelect.value)]; if (v) u.voice = v; u.rate = Number(speed.value); u.pitch = 1;
-                u.onstart = () => { setStatus('Speaking section ' + index + ' of ' + sections.length); bar.style.width = ((index - 1) / sections.length * 100) + '%' };
-                u.onend = () => speakNext(); u.onerror = () => { setStatus('Voice playback stopped.'); speaking = false };
-                synth.speak(u);
-            }
-            document.getElementById('voiceWhole').onclick = () => speakParts(makeWhole());
-            document.getElementById('voiceProject').onclick = () => speakParts(makeProject());
-            document.getElementById('voiceStop').onclick = () => { speaking = false; synth.cancel(); bar.style.width = '0'; setStatus('Stopped.'); };
-            document.getElementById('voicePause').onclick = () => { if (synth.paused) { synth.resume(); setStatus('Resumed.') } else if (synth.speaking) { synth.pause(); setStatus('Paused.') } };
-            document.getElementById('voiceSkip').onclick = () => { if (synth.speaking) { synth.cancel(); speakNext() } };
-        })();
+            const panel = document.getElementById('voicePanel');
+            const toggle = document.getElementById('voiceToggle');
+            const voiceSelect = document.getElementById('voiceSelect');
+            const speed = document.getElementById('voiceSpeed');
+            const status = document.getElementById('voiceStatus');
+            const bar = document.getElementById('voiceProgressBar');
+            const stopBtn = document.getElementById('voiceStop');
+            const wholeBtn = document.getElementById('voiceWhole');
+            const projectBtn = document.getElementById('voiceProject');
+            const pauseBtn = document.getElementById('voicePause');
+            const skipBtn = document.getElementById('voiceSkip');
 
+            if (!synth || !toggle || !panel) return;
+
+            let voices = [];
+            let queue = [];
+            let index = 0;
+            let speaking = false;
+            let mode = 'page';
+            let lastText = '';
+            let watchdog = null;
+
+            const EXCLUDE_SELECTORS = [
+                'nav',
+                '#filters',
+                '.voiceDock',
+                '#voicePanel',
+                '#voiceToggle',
+                'script',
+                'style',
+                'noscript',
+                'template',
+                '[aria-hidden="true"]'
+            ];
+
+            const BLOCK_TAGS = new Set([
+                'ADDRESS','ARTICLE','ASIDE','BLOCKQUOTE','CAPTION','DD','DIV','DT',
+                'FIGCAPTION','FOOTER','FORM','H1','H2','H3','H4','H5','H6',
+                'HEADER','LI','MAIN','P','PRE','SECTION','SUMMARY','TD','TH',
+                'TR','BUTTON','LABEL','LEGEND','OPTION'
+            ]);
+
+            function setStatus(message) {
+                if (status) status.textContent = message || '';
+            }
+
+            function normalizeText(text) {
+                return String(text || '')
+                    .replace(/\u00a0/g, ' ')
+                    .replace(/[ \t]+\n/g, '\n')
+                    .replace(/\n[ \t]+/g, '\n')
+                    .replace(/[ \t]{2,}/g, ' ')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+            }
+
+            function isExcluded(el) {
+                if (!el || el.nodeType !== 1) return false;
+                return EXCLUDE_SELECTORS.some(sel => {
+                    try { return el.matches(sel) || !!el.closest(sel); }
+                    catch (_) { return false; }
+                });
+            }
+
+            function isVisible(el) {
+                if (!el || el.nodeType !== 1 || isExcluded(el)) return false;
+                const cs = getComputedStyle(el);
+                if (cs.display === 'none' || cs.visibility === 'hidden' ||
+                    Number(cs.opacity) === 0) return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }
+
+            function loadVoices() {
+                voices = synth.getVoices().filter(v => v && v.lang);
+                if (!voiceSelect) return;
+
+                const old = voiceSelect.value;
+                voiceSelect.innerHTML = '';
+                voices.forEach((v, i) => {
+                    const o = document.createElement('option');
+                    o.value = String(i);
+                    o.textContent = v.name + ' — ' + v.lang;
+                    voiceSelect.appendChild(o);
+                });
+
+                if (!voices.length) return;
+                const oldIndex = Number(old);
+                if (Number.isInteger(oldIndex) && voices[oldIndex]) {
+                    voiceSelect.value = old;
+                    return;
+                }
+
+                const preferred = voices.findIndex(v => /^(hi-IN|en-IN|en-US|en-GB)$/i.test(v.lang));
+                voiceSelect.value = String(preferred >= 0 ? preferred : 0);
+            }
+
+            loadVoices();
+            if ('onvoiceschanged' in synth) synth.onvoiceschanged = loadVoices;
+
+            toggle.addEventListener('click', () => {
+                panel.classList.toggle('open');
+                toggle.textContent = panel.classList.contains('open')
+                    ? '🔊 Voice Guide ▴'
+                    : '🔊 Voice Guide ▾';
+            });
+
+            function preferredVoiceFor(text) {
+                const chosen = voices[Number(voiceSelect?.value)];
+                if (chosen) {
+                    // If the selected voice matches the text language, use it.
+                    const hasHindi = /[\u0900-\u097F]/.test(text);
+                    const isHindiVoice = /^hi(-|$)/i.test(chosen.lang);
+                    const isEnglishVoice = /^en(-|$)/i.test(chosen.lang);
+                    if ((hasHindi && isHindiVoice) || (!hasHindi && isEnglishVoice)) return chosen;
+                }
+
+                const hasHindi = /[\u0900-\u097F]/.test(text);
+                const patterns = hasHindi
+                    ? [/^hi-IN/i, /^hi/i, /^en-IN/i, /^en/i]
+                    : [/^en-IN/i, /^en-US/i, /^en-GB/i, /^en/i, /^hi-IN/i, /^hi/i];
+
+                for (const re of patterns) {
+                    const v = voices.find(x => re.test(x.lang));
+                    if (v) return v;
+                }
+                return chosen || voices[0] || null;
+            }
+
+            /*
+             * Collect visible text in DOM order.
+             * Navigation/filter bars are excluded. The Voice Guide itself is excluded
+             * so it never reads its own buttons. Everything else that is visible is
+             * retained, including headings, paragraphs, cards, buttons, labels,
+             * tables, formulas, footer, certificate content and live readouts.
+             */
+            function collectVisibleLines(root) {
+                if (!root) return [];
+
+                const lines = [];
+                let current = '';
+
+                function flush() {
+                    const t = normalizeText(current);
+                    if (t) lines.push(t);
+                    current = '';
+                }
+
+                function walk(node) {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        const value = normalizeText(node.nodeValue);
+                        if (value) current += (current ? ' ' : '') + value;
+                        return;
+                    }
+
+                    if (node.nodeType !== Node.ELEMENT_NODE) return;
+                    const el = node;
+
+                    if (isExcluded(el)) {
+                        flush();
+                        return;
+                    }
+
+                    // Hidden elements are not spoken. If a hidden modal becomes visible,
+                    // it will automatically be included on the next scan.
+                    if (!isVisible(el)) {
+                        flush();
+                        return;
+                    }
+
+                    const tag = el.tagName;
+                    const isBlock = BLOCK_TAGS.has(tag);
+
+                    if (isBlock) flush();
+
+                    // Form controls: speak their visible label/value/placeholder where
+                    // meaningful, but never read technical HTML attributes.
+                    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+                        const label = el.closest('label');
+                        if (label && isVisible(label)) {
+                            const labelText = normalizeText(label.innerText || '');
+                            if (labelText) {
+                                lines.push(labelText);
+                            } else if (el.placeholder) {
+                                lines.push(normalizeText(el.placeholder));
+                            }
+                        } else if (el.placeholder) {
+                            lines.push(normalizeText(el.placeholder));
+                        }
+                        flush();
+                        return;
+                    }
+
+                    if (tag === 'SELECT') {
+                        const label = el.closest('label');
+                        const selected = el.options && el.selectedIndex >= 0
+                            ? el.options[el.selectedIndex]?.textContent
+                            : '';
+                        if (label) {
+                            const labelText = normalizeText(label.innerText || '');
+                            if (labelText) lines.push(labelText);
+                        } else if (selected) {
+                            lines.push(normalizeText(selected));
+                        }
+                        flush();
+                        return;
+                    }
+
+                    if (tag === 'IMG') {
+                        const alt = normalizeText(el.alt || '');
+                        if (alt) lines.push(alt);
+                        flush();
+                        return;
+                    }
+
+                    if (tag === 'BR') {
+                        flush();
+                        return;
+                    }
+
+                    for (const child of el.childNodes) walk(child);
+
+                    if (isBlock) flush();
+                }
+
+                walk(root);
+                flush();
+
+                // Remove duplicates caused by nested labels/containers while preserving
+                // order. Do not collapse genuinely repeated content in tables/cards.
+                return lines.filter((x, i) => x.length > 0 && (i === 0 || x !== lines[i - 1]));
+            }
+
+            function chunkLine(text, maxChars = 420) {
+                const t = normalizeText(text);
+                if (!t) return [];
+
+                if (t.length <= maxChars) return [t];
+
+                // First split at sentence boundaries.
+                const sentences = t.match(/[^.!?।]+[.!?।]+|[^.!?।]+$/g) || [t];
+                const chunks = [];
+                let buf = '';
+
+                for (const raw of sentences) {
+                    const sentence = normalizeText(raw);
+                    if (!sentence) continue;
+
+                    if ((buf + ' ' + sentence).trim().length <= maxChars) {
+                        buf = (buf + ' ' + sentence).trim();
+                    } else {
+                        if (buf) chunks.push(buf);
+                        if (sentence.length <= maxChars) {
+                            buf = sentence;
+                        } else {
+                            // Hard split very long equations/strings safely at word boundaries.
+                            const words = sentence.split(/\s+/);
+                            buf = '';
+                            for (const word of words) {
+                                if (!buf) buf = word;
+                                else if ((buf + ' ' + word).length <= maxChars) {
+                                    buf += ' ' + word;
+                                } else {
+                                    chunks.push(buf);
+                                    buf = word;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (buf) chunks.push(buf);
+                return chunks;
+            }
+
+            function prepareQueue(lines) {
+                const chunks = [];
+                lines.forEach(line => {
+                    chunkLine(line).forEach(part => chunks.push(part));
+                });
+                return chunks;
+            }
+
+            function collectPage() {
+                // BODY gives the complete visible website. Navigation and voice UI are
+                // removed by isExcluded(), while open modals/overlays are included if visible.
+                return collectVisibleLines(document.body);
+            }
+
+            function collectCurrentProject() {
+                const modal = document.getElementById('projectModal');
+                if (!modal || !isVisible(modal)) {
+                    setStatus('Open a project first, then press Project.');
+                    return [];
+                }
+                return collectVisibleLines(modal);
+            }
+
+            function speakQueue(lines, label) {
+                if (!lines || !lines.length) {
+                    setStatus('There is no visible content to read.');
+                    return;
+                }
+
+                synth.cancel();
+                clearTimeout(watchdog);
+
+                queue = prepareQueue(lines);
+                index = 0;
+                mode = label || 'page';
+                lastText = '';
+                speaking = true;
+                bar.style.width = '0%';
+
+                setStatus('Preparing ' + queue.length + ' voice parts...');
+                // Give Chrome/Edge a moment after cancel() before the first utterance.
+                setTimeout(speakNext, 80);
+            }
+
+            function speakNext() {
+                clearTimeout(watchdog);
+
+                if (!speaking || index >= queue.length) {
+                    speaking = false;
+                    bar.style.width = '100%';
+                    setStatus('Finished — every visible line was read.');
+                    return;
+                }
+
+                const text = queue[index];
+                lastText = text;
+
+                const utterance = new SpeechSynthesisUtterance(text);
+                const voice = preferredVoiceFor(text);
+                if (voice) utterance.voice = voice;
+
+                utterance.rate = Math.max(0.55, Math.min(1.8, Number(speed.value) || 1));
+                utterance.pitch = 1;
+                utterance.volume = 1;
+
+                const partNumber = index + 1;
+                utterance.onstart = () => {
+                    setStatus('Speaking ' + partNumber + ' of ' + queue.length + ' — ' + mode);
+                    bar.style.width = ((index / queue.length) * 100) + '%';
+                };
+
+                utterance.onend = () => {
+                    clearTimeout(watchdog);
+                    index++;
+                    speakNext();
+                };
+
+                utterance.onerror = (event) => {
+                    clearTimeout(watchdog);
+
+                    // Chrome occasionally reports "interrupted" when cancel() is called
+                    // by another browser event. Continue only for non-interruption errors.
+                    if (event && event.error === 'interrupted') return;
+
+                    index++;
+                    if (index < queue.length) {
+                        setStatus('Voice recovered after a playback error. Continuing...');
+                        setTimeout(speakNext, 60);
+                    } else {
+                        speaking = false;
+                        setStatus('Voice playback ended.');
+                    }
+                };
+
+                // Some browsers stop firing onend for very long utterances. A watchdog
+                // prevents the reader from silently freezing.
+                watchdog = setTimeout(() => {
+                    if (speaking && synth.speaking) {
+                        try { synth.cancel(); } catch (_) {}
+                        index++;
+                        setTimeout(speakNext, 80);
+                    }
+                }, Math.max(12000, text.length * 170));
+
+                synth.speak(utterance);
+            }
+
+            function stop() {
+                speaking = false;
+                clearTimeout(watchdog);
+                try { synth.cancel(); } catch (_) {}
+                queue = [];
+                index = 0;
+                bar.style.width = '0%';
+                setStatus('Stopped.');
+            }
+
+            wholeBtn.onclick = () => {
+                speakQueue(collectPage(), 'complete website');
+            };
+
+            projectBtn.onclick = () => {
+                speakQueue(collectCurrentProject(), 'current project');
+            };
+
+            stopBtn.onclick = stop;
+
+            pauseBtn.onclick = () => {
+                if (!speaking) return;
+                if (synth.paused) {
+                    synth.resume();
+                    setStatus('Resumed.');
+                } else if (synth.speaking) {
+                    synth.pause();
+                    setStatus('Paused.');
+                }
+            };
+
+            skipBtn.onclick = () => {
+                if (!speaking || !queue.length) return;
+                clearTimeout(watchdog);
+                try { synth.cancel(); } catch (_) {}
+                index++;
+                setTimeout(speakNext, 80);
+            };
+
+            // If the user opens/closes a project while the reader is idle, no extra
+            // action is needed. Pressing Project always re-scans the current modal,
+            // so dynamic simulation/readout/certificate text is captured.
+            window.PriyanshCompleteVoice = {
+                readEverything: () => speakQueue(collectPage(), 'complete website'),
+                readCurrentProject: () => speakQueue(collectCurrentProject(), 'current project'),
+                stop,
+                pauseResume: () => pauseBtn.click()
+            };
+        })();
 
         /* ===== Account Gate + Student Profile — Google Sheets Database ===== */
         (function () {
